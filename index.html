@@ -1,76 +1,534 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Minimal IPTV Player</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NovaStream IPTV — iptv-org & EPGShare01</title>
+  
+  <!-- Hls.js for video streaming -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <!-- Pako for fast in-browser .xml.gz decompression -->
+  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+  <!-- Phosphor Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
   <style>
-    body { font-family: sans-serif; background: #121212; color: #fff; display: flex; height: 100vh; margin: 0; }
-    #sidebar { width: 320px; background: #1e1e1e; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-    #main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-    video { width: 90%; max-height: 80vh; background: #000; border-radius: 8px; }
-    textarea { width: 100%; height: 80px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 8px; box-sizing: border-box; }
-    button { background: #0070f3; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; }
-    .channel-item { padding: 10px; background: #2a2a2a; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-    .channel-item:hover { background: #3a3a3a; }
-    .channel-item img { width: 24px; height: 24px; object-fit: contain; }
+    :root {
+      --bg: #0b0f19;
+      --card-bg: rgba(23, 32, 54, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.25);
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Sidebar Channels */
+    #sidebar {
+      width: 380px;
+      min-width: 320px;
+      background: #0f172a;
+      border-right: 1px solid var(--card-border);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .header-box {
+      padding: 16px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .brand i { color: var(--accent); font-size: 1.4rem; }
+
+    .source-selectors {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    select, input {
+      background: #1e293b;
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); }
+
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-box input { width: 100%; padding-left: 32px; }
+    .search-box i { position: absolute; left: 10px; color: var(--text-muted); }
+
+    .channel-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .channel-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px;
+      background: var(--card-bg);
+      border: 1px solid transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .channel-card:hover { background: #1e293b; }
+    .channel-card.active {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: var(--accent);
+    }
+
+    .logo-container {
+      width: 44px;
+      height: 44px;
+      background: #020617;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .logo-container img { width: 100%; height: 100%; object-fit: contain; }
+    .logo-container .fallback-icon { font-size: 1.4rem; color: var(--text-muted); }
+
+    .meta-info { flex: 1; min-width: 0; }
+    .ch-title {
+      font-weight: 600;
+      font-size: 0.9rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ch-group {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Main Player & Details */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background: #020617;
+      overflow-y: auto;
+    }
+
+    .player-container {
+      position: relative;
+      width: 100%;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      max-height: 65vh;
+    }
+    video {
+      width: 100%;
+      max-height: 65vh;
+      aspect-ratio: 16/9;
+      outline: none;
+    }
+
+    .details-pane {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .now-playing {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 16px;
+    }
+    .channel-focus-name { font-size: 1.5rem; font-weight: 700; }
+    .channel-badge {
+      background: #1e293b;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      color: var(--accent);
+      border: 1px solid var(--card-border);
+    }
+
+    /* EPG Schedule Section */
+    .epg-section h4 {
+      font-size: 1rem;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .epg-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .epg-item {
+      display: flex;
+      gap: 16px;
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      padding: 12px;
+      border-radius: 8px;
+    }
+    .epg-item.current {
+      border-color: var(--accent);
+      background: rgba(56, 189, 248, 0.05);
+    }
+    .epg-time {
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: var(--accent);
+      min-width: 90px;
+    }
+    .epg-info h5 { font-size: 0.95rem; margin-bottom: 4px; }
+    .epg-info p { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; }
+
+    .status-toast {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
   </style>
 </head>
 <body>
+
+  <!-- Channel Sidebar -->
   <div id="sidebar">
-    <h3>IPTV Channels</h3>
-    <textarea id="m3uInput" placeholder="Paste #EXTM3U playlist content here..."></textarea>
-    <button onclick="parsePlaylist()">Load Playlist</button>
-    <div id="channelList" style="display:flex; flex-direction:column; gap:8px;"></div>
+    <div class="header-box">
+      <div class="brand">
+        <i class="ph-bold ph-television"></i>
+        <span>NovaStream</span>
+      </div>
+
+      <div class="source-selectors">
+        <!-- Preset iptv-org country/category lists -->
+        <select id="countrySelect" onchange="loadPresetFeed()">
+          <option value="id">Indonesia (ID)</option>
+          <option value="us">United States (US)</option>
+          <option value="uk">United Kingdom (UK)</option>
+          <option value="jp">Japan (JP)</option>
+          <option value="news">Category: News</option>
+          <option value="sports">Category: Sports</option>
+        </select>
+
+        <!-- Proxy Selector for CORS bypass -->
+        <select id="proxySelect">
+          <option value="https://corsproxy.io/?">Proxy: Corsproxy</option>
+          <option value="direct">Direct (No Proxy)</option>
+        </select>
+      </div>
+
+      <div class="search-box">
+        <i class="ph ph-magnifying-glass"></i>
+        <input type="text" id="searchInput" placeholder="Search channels..." oninput="filterChannels()" />
+      </div>
+
+      <div class="status-toast" id="epgStatus">
+        <i class="ph ph-circle-notch" id="epgSpinner" style="display:none; animation: spin 1s linear infinite;"></i>
+        <span id="epgStatusText">EPG: Initializing...</span>
+      </div>
+    </div>
+
+    <div class="channel-list" id="channelList"></div>
   </div>
 
+  <!-- Main Video Player and Program Schedule -->
   <div id="main">
-    <video id="videoPlayer" controls autoplay></video>
+    <div class="player-container">
+      <video id="videoPlayer" controls autoplay></video>
+    </div>
+
+    <div class="details-pane">
+      <div class="now-playing">
+        <div>
+          <div class="channel-focus-name" id="currentChTitle">Select a channel</div>
+          <div style="font-size:0.8rem; color:var(--text-muted);" id="currentChTvgId">tvg-id: -</div>
+        </div>
+        <div class="channel-badge" id="currentChGroup">Stream Ready</div>
+      </div>
+
+      <div class="epg-section">
+        <h4><i class="ph-bold ph-calendar-blank"></i> Electronic Program Guide (EPGShare01)</h4>
+        <div class="epg-list" id="epgProgrammes">
+          <div style="color:var(--text-muted); font-size: 0.85rem;">Select an active channel to view schedule.</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
     const video = document.getElementById('videoPlayer');
     let hls = new Hls();
+    let channels = [];
+    let activeChannel = null;
+    let epgDatabase = {}; // Keyed by tvg-id
 
-    function playStream(url) {
-      if (Hls.isSupported()) {
-        hls.destroy();
-        hls = new Hls();
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
-        video.play();
+    // Default feeds
+    const IPTV_ORG_BASE = 'https://raw.githubusercontent.com/iptv-org/iptv/master/streams/';
+    const EPGSHARE_MAP = {
+      'id': 'https://epgshare01.online/epgshare01/epg_ripper_ID1.xml.gz',
+      'us': 'https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz',
+      'uk': 'https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz',
+      'jp': 'https://epgshare01.online/epgshare01/epg_ripper_JP1.xml.gz'
+    };
+
+    function getProxyUrl(url) {
+      const mode = document.getElementById('proxySelect').value;
+      return mode === 'direct' ? url : `${mode}${encodeURIComponent(url)}`;
+    }
+
+    // 1. Load iptv-org M3U
+    async function loadPresetFeed() {
+      const selection = document.getElementById('countrySelect').value;
+      let m3uUrl = '';
+      
+      if (['news', 'sports'].includes(selection)) {
+        m3uUrl = `https://iptv-org.github.io/iptv/categories/${selection}.m3u`;
+      } else {
+        m3uUrl = `${IPTV_ORG_BASE}${selection}.m3u`;
+      }
+
+      document.getElementById('epgStatusText').textContent = 'Fetching Playlist...';
+
+      try {
+        const response = await fetch(getProxyUrl(m3uUrl));
+        const data = await response.text();
+        parseM3U(data);
+
+        // Fetch EPG for supported regions
+        if (EPGSHARE_MAP[selection]) {
+          loadEpgFeed(EPGSHARE_MAP[selection]);
+        } else {
+          document.getElementById('epgStatusText').textContent = 'EPG not mapped for category.';
+        }
+      } catch (err) {
+        document.getElementById('epgStatusText').textContent = 'Failed to load playlist.';
+        console.error(err);
       }
     }
 
-    function parsePlaylist() {
-      const text = document.getElementById('m3uInput').value;
+    // Parse M3U playlist format
+    function parseM3U(text) {
+      channels = [];
       const lines = text.split('\n');
-      const listContainer = document.getElementById('channelList');
-      listContainer.innerHTML = '';
-
-      let currentName = 'Unknown Channel';
-      let currentLogo = '';
+      let currentItem = {};
 
       lines.forEach(line => {
         line = line.trim();
         if (line.startsWith('#EXTINF:')) {
-          const nameMatch = line.match(/,(.*)$/);
-          const logoMatch = line.match(/tvg-logo="([^"]+)"/);
-          currentName = nameMatch ? nameMatch[1] : 'Channel';
-          currentLogo = logoMatch ? logoMatch[1] : '';
+          const tvgId = (line.match(/tvg-id="([^"]+)"/) || [])[1] || '';
+          const logo = (line.match(/tvg-logo="([^"]+)"/) || [])[1] || '';
+          const group = (line.match(/group-title="([^"]+)"/) || [])[1] || 'General';
+          const name = (line.match(/,(.*)$/) || [])[1] || 'Unknown';
+
+          currentItem = { tvgId, logo, group, name };
         } else if (line.startsWith('http://') || line.startsWith('https://')) {
-          const streamUrl = line;
-          const btn = document.createElement('div');
-          btn.className = 'channel-item';
-          btn.innerHTML = `${currentLogo ? `<img src="${currentLogo}" />` : ''} <span>${currentName}</span>`;
-          btn.onclick = () => playStream(streamUrl);
-          listContainer.appendChild(btn);
+          currentItem.url = line;
+          channels.push({ ...currentItem });
+          currentItem = {};
         }
       });
+
+      renderChannelList(channels);
+      if (channels.length > 0) playChannel(channels[0]);
     }
+
+    // 2. Fetch & Decompress EPGShare01 .xml.gz Feed
+    async function loadEpgFeed(epgUrl) {
+      const statusText = document.getElementById('epgStatusText');
+      statusText.textContent = 'Downloading EPG (EPGShare01)...';
+
+      try {
+        const response = await fetch(getProxyUrl(epgUrl));
+        const arrayBuffer = await response.arrayBuffer();
+
+        statusText.textContent = 'Decompressing EPG (.gz)...';
+        // Decompress raw Gzip stream in browser memory
+        const uncompressed = pako.ungzip(new Uint8Array(arrayBuffer), { to: 'string' });
+
+        statusText.textContent = 'Parsing XMLTV schedules...';
+        parseXMLTV(uncompressed);
+        statusText.textContent = 'EPG Active & Ready';
+        
+        if (activeChannel) displayEpgForChannel(activeChannel.tvgId);
+      } catch (err) {
+        statusText.textContent = 'EPG load error (CORS or file size).';
+        console.error(err);
+      }
+    }
+
+    // 3. Match <programme> entries to tvg-id
+    function parseXMLTV(xmlString) {
+      epgDatabase = {};
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xmlString, "application/xml");
+      const programmes = doc.querySelectorAll('programme');
+
+      programmes.forEach(node => {
+        const channelId = node.getAttribute('channel');
+        const startRaw = node.getAttribute('start');
+        const stopRaw = node.getAttribute('stop');
+        const title = node.querySelector('title')?.textContent || 'Untitled Show';
+        const desc = node.querySelector('desc')?.textContent || '';
+
+        if (!epgDatabase[channelId]) epgDatabase[channelId] = [];
+
+        epgDatabase[channelId].push({
+          start: parseXmlDate(startRaw),
+          stop: parseXmlDate(stopRaw),
+          title,
+          desc
+        });
+      });
+    }
+
+    // Format XMLTV timestamps: 20261110180000 +0800
+    function parseXmlDate(dateStr) {
+      if (!dateStr) return null;
+      const year = dateStr.slice(0, 4);
+      const month = dateStr.slice(4, 6) - 1;
+      const day = dateStr.slice(6, 8);
+      const hours = dateStr.slice(8, 10);
+      const minutes = dateStr.slice(10, 12);
+      return new Date(Date.UTC(year, month, day, hours, minutes));
+    }
+
+    function formatTime(d) {
+      if (!d) return '--:--';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Display matching shows for selected channel
+    function displayEpgForChannel(tvgId) {
+      const container = document.getElementById('epgProgrammes');
+      container.innerHTML = '';
+
+      if (!tvgId || !epgDatabase[tvgId] || epgDatabase[tvgId].length === 0) {
+        container.innerHTML = `<div style="color:var(--text-muted); font-size:0.85rem;">No EPG listing found for tvg-id: "${tvgId || 'none'}"</div>`;
+        return;
+      }
+
+      const list = epgDatabase[tvgId];
+      const now = new Date();
+
+      list.slice(0, 10).forEach(prog => {
+        const isCurrent = prog.start && prog.stop && now >= prog.start && now <= prog.stop;
+        const item = document.createElement('div');
+        item.className = `epg-item ${isCurrent ? 'current' : ''}`;
+        item.innerHTML = `
+          <div class="epg-time">${formatTime(prog.start)} - ${formatTime(prog.stop)}</div>
+          <div class="epg-info">
+            <h5>${prog.title} ${isCurrent ? '<span style="color:var(--accent); font-size:0.75rem;">(ON AIR)</span>' : ''}</h5>
+            <p>${prog.desc || 'No program description provided.'}</p>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    // Render channels in sidebar
+    function renderChannelList(list) {
+      const container = document.getElementById('channelList');
+      container.innerHTML = '';
+
+      list.forEach((ch, idx) => {
+        const card = document.createElement('div');
+        card.className = `channel-card ${activeChannel && activeChannel.url === ch.url ? 'active' : ''}`;
+        card.innerHTML = `
+          <div class="logo-container">
+            ${ch.logo ? `<img src="${ch.logo}" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<i class=\\'ph ph-tv\\'></i>'" />` : '<i class="ph ph-tv fallback-icon"></i>'}
+          </div>
+          <div class="meta-info">
+            <div class="ch-title">${ch.name}</div>
+            <div class="ch-group">${ch.group}</div>
+          </div>
+        `;
+        card.onclick = () => {
+          playChannel(ch);
+          document.querySelectorAll('.channel-card').forEach(c => c.classList.remove('active'));
+          card.classList.add('active');
+        };
+        container.appendChild(card);
+      });
+    }
+
+    // Video Engine (Hls.js)
+    function playChannel(ch) {
+      activeChannel = ch;
+      document.getElementById('currentChTitle').textContent = ch.name;
+      document.getElementById('currentChGroup').textContent = ch.group;
+      document.getElementById('currentChTvgId').textContent = `tvg-id: ${ch.tvgId || 'None'}`;
+
+      displayEpgForChannel(ch.tvgId);
+
+      const streamUrl = ch.url;
+      if (Hls.isSupported()) {
+        hls.destroy();
+        hls = new Hls({ enableWorker: true });
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = streamUrl;
+        video.play().catch(() => {});
+      }
+    }
+
+    function filterChannels() {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const filtered = channels.filter(c => c.name.toLowerCase().includes(query) || c.group.toLowerCase().includes(query));
+      renderChannelList(filtered);
+    }
+
+    // Run on startup
+    window.onload = () => loadPresetFeed();
   </script>
 </body>
 </html>
